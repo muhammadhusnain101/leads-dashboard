@@ -139,6 +139,28 @@ async function getLeads() {
             allLeads = [];
         }
 
+        allLeads = allLeads.filter(lead => {
+            if (!lead || typeof lead !== "object") {
+                return false;
+            }
+
+            return Object.entries(lead).some(([key, value]) => {
+                const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+                const isIdentityField =
+                    normalizedKey === "name" ||
+                    normalizedKey === "fullname" ||
+                    normalizedKey === "phone" ||
+                    normalizedKey === "email";
+                const normalizedValue = String(value ?? "").trim().toLowerCase();
+
+                return isIdentityField &&
+                    normalizedValue !== "" &&
+                    normalizedValue !== "-" &&
+                    normalizedValue !== "null" &&
+                    normalizedValue !== "undefined";
+            });
+        });
+
         console.log("FINAL LEADS:", allLeads);
         console.log("TOTAL LEADS:", allLeads.length);
 
@@ -250,11 +272,46 @@ function extractPartyValue(value, party) {
 }
 
 
+function getLeadParty(lead) {
+    const partyKeyNames = new Set([
+        "buyerseller",
+        "buyerorseller",
+        "leadtype",
+        "leadcategory",
+        "category",
+        "type",
+        "role",
+        "side"
+    ]);
+
+    const partyEntry = Object.entries(lead).find(([key, value]) => {
+        const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const normalizedValue = String(value ?? "").toLowerCase().trim();
+
+        return (
+            (partyKeyNames.has(normalizedKey) || normalizedKey.includes("buyerorseller")) &&
+            (normalizedValue === "buyer" || normalizedValue === "seller")
+        );
+    });
+
+    if (partyEntry) {
+        return String(partyEntry[1]).toLowerCase().trim();
+    }
+
+    const hasBuyerName = getPartyName(lead, "buyer") !== "-";
+    const hasSellerName = getPartyName(lead, "seller") !== "-";
+
+    if (hasBuyerName && !hasSellerName) return "buyer";
+    if (hasSellerName && !hasBuyerName) return "seller";
+
+    return "";
+}
+
+
 function getPartyName(lead, party) {
     const directValue =
         lead[`${party}Name`] ??
         lead[`${party}FullName`] ??
-        lead[party] ??
         lead[`${party}_name`] ??
         lead[`${party}_full_name`] ??
         lead[`${party} Name`] ??
@@ -267,10 +324,10 @@ function getPartyName(lead, party) {
     const normalizedParty = party.toLowerCase();
     const matchingEntry = Object.entries(lead).find(([key, value]) => {
         const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const isPartyField = normalizedKey === normalizedParty || normalizedKey.startsWith(normalizedParty);
+        const isPartyField = normalizedKey.startsWith(normalizedParty);
         const isNameField = normalizedKey.includes("name") || normalizedKey.includes("fullname");
 
-        return isPartyField && (isNameField || normalizedKey === normalizedParty) && value !== null && value !== undefined && value !== "";
+        return isPartyField && isNameField && value !== null && value !== undefined && value !== "";
     });
 
     if (matchingEntry) {
@@ -302,15 +359,25 @@ function updateKPIs(leads) {
     const totalRevenue = leads.reduce((sum, lead) => {
         return sum + getLeadRevenue(lead);
     }, 0);
+    const buyerRevenue = leads.reduce((sum, lead) => {
+        return getLeadParty(lead) === "buyer" ? sum + getLeadRevenue(lead) : sum;
+    }, 0);
+    const sellerRevenue = leads.reduce((sum, lead) => {
+        return getLeadParty(lead) === "seller" ? sum + getLeadRevenue(lead) : sum;
+    }, 0);
     const totalLeadsElement = document.getElementById("totalLeads");
     const activeLeadsElement = document.getElementById("activeLeads");
     const leadsPerDayElement = document.getElementById("leadsPerDay");
     const revenueElement = document.getElementById("totalRevenue");
+    const buyerRevenueElement = document.getElementById("buyerRevenue");
+    const sellerRevenueElement = document.getElementById("sellerRevenue");
 
     if (totalLeadsElement) totalLeadsElement.textContent = totalLeads;
     if (activeLeadsElement) activeLeadsElement.textContent = activeLeads;
     if (leadsPerDayElement) leadsPerDayElement.textContent = Number(leadsPerDayTotal).toFixed(1);
     if (revenueElement) revenueElement.textContent = `$${totalRevenue}`;
+    if (buyerRevenueElement) buyerRevenueElement.textContent = `$${buyerRevenue}`;
+    if (sellerRevenueElement) sellerRevenueElement.textContent = `$${sellerRevenue}`;
 
     const leadCount = document.getElementById("leadCount");
     if (leadCount) {
@@ -362,6 +429,13 @@ function displayLeads(leads) {
 
             const buyerName = getPartyName(lead, "buyer");
             const sellerName = getPartyName(lead, "seller");
+            const leadParty = getLeadParty(lead);
+            const displayedBuyerName = buyerName !== "-"
+                ? buyerName
+                : leadParty === "buyer" ? name : "-";
+            const displayedSellerName = sellerName !== "-"
+                ? sellerName
+                : leadParty === "seller" ? name : "-";
 
             const phone =
                 lead.Phone ??
@@ -387,11 +461,11 @@ function displayLeads(leads) {
                     </td>
 
                     <td>
-                        ${escapeHTML(String(buyerName))}
+                        ${escapeHTML(String(displayedBuyerName))}
                     </td>
 
                     <td>
-                        ${escapeHTML(String(sellerName))}
+                        ${escapeHTML(String(displayedSellerName))}
                     </td>
 
                     <td>
